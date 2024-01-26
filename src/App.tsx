@@ -1,7 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
 import axios, {AxiosError, AxiosResponse} from 'axios';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faSpinner } from '@fortawesome/free-solid-svg-icons';
+import {FontAwesomeIcon} from '@fortawesome/react-fontawesome';
+import {faSpinner} from '@fortawesome/free-solid-svg-icons';
+import Table from "./Table";
 
 type ResponseStatus = 'success' | 'error';
 
@@ -15,7 +16,6 @@ interface Request {
   responseStatus: ResponseStatus | null;
   responseTime: number | null;
   responseData: string;
-  responseLogs: string;
 }
 
 function loadRequestFromLocalStorage(): Request {
@@ -27,13 +27,82 @@ function saveRequestToLocalStorage(request: Request): void {
   localStorage.setItem('request', JSON.stringify(request, null, 2));
 }
 
+function loadRequestIdFromLocalStorage(): string {
+  return localStorage.getItem('requestId') ?? '';
+}
+
+function saveRequestIdToLocalStorage(requestId: string): void {
+  localStorage.setItem('requestId', requestId);
+}
+
 const App: React.FC = () => {
   const [request, setRequest] = useState<Request>(loadRequestFromLocalStorage());
-  const [newRequestId, setNewRequestId] = useState('');
+  const [logs, setLogs] = useState<[] | null>(null);
+  const [newRequestId, setNewRequestId] = useState(loadRequestIdFromLocalStorage());
   const [newServiceUrl, setNewServiceUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isLogsLoading, setLogsIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const scrollToBottom = () => {
+      window.scrollTo({
+        top: document.documentElement.scrollHeight || document.body.scrollHeight,
+      });
+    };
+
+    scrollToBottom();
+  }, [logs]);
+
+  // Определите столбцы для таблицы
+  const columns = React.useMemo(
+    () => [
+      {
+        Header: '№',
+        accessor: 'Id',
+      },
+      {
+        Header: 'Сообщение',
+        accessor: 'Message',
+        width: 300,
+      },
+      {
+        Header: 'Ошибка',
+        accessor: 'Exception',
+        width: 300,
+      },
+      {
+        Header: 'Категория',
+        accessor: 'Level',
+      },
+      {
+        Header: 'Дата',
+        accessor: 'TimeStamp',
+        width: 180,
+      },
+      {
+        Header: 'Запрос',
+        accessor: 'RequestId',
+      },
+      {
+        Header: 'ПБ',
+        accessor: 'DrillingProgramId',
+      },
+      {
+        Header: 'Пользователь',
+        accessor: 'UserName',
+      },
+      {
+        Header: 'Приложение',
+        accessor: 'ApplicationName',
+      },
+      {
+        Header: 'Версия',
+        accessor: 'ApplicationVersion',
+      },
+    ],
+    []
+  );
 
   useEffect(() => {
     saveRequestToLocalStorage(request);
@@ -141,10 +210,11 @@ const App: React.FC = () => {
 
     setIsLoading(true);
     setNewRequestId('');
+    saveRequestIdToLocalStorage('');
     handleRequestChange('responseData', '');
     handleRequestChange('responseTime', null);
-    handleRequestChange('responseLogs', '');
     handleRequestChange('responseStatus', null);
+    setLogs(null);
 
     try {
       // Отправка запроса с использованием axios
@@ -226,6 +296,7 @@ const App: React.FC = () => {
     console.log('requestId', requestId);
 
     setNewRequestId(requestId);
+    saveRequestIdToLocalStorage(requestId);
   }
 
   const setResponseTime = (response: AxiosResponse) => {
@@ -245,12 +316,12 @@ const App: React.FC = () => {
       });
       setLogsIsLoading(false);
       console.log('responseLogs', responseLogs);
-      handleRequestChange('responseLogs', JSON.stringify(responseLogs.data, null, 2));
+      setLogs(responseLogs.data);
     }
     catch (error) {
       setLogsIsLoading(false);
       console.error('Ошибка при получении логов запроса:', error);
-      handleRequestChange('responseLogs', JSON.stringify(error));
+      setLogs(null);
     }
   }
 
@@ -265,20 +336,21 @@ const App: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto', padding: '20px' }}>
+    <>
+    <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '20px' }}>
       <form onSubmit={handleAddService} style={{ marginBottom: '10px' }}>
         <input
           type="text"
           placeholder="Новый адрес сервиса"
           value={newServiceUrl}
           onChange={(e) => setNewServiceUrl(e.target.value)}
-          style={{ width: '226px', padding: '10px', marginRight: '10px' }}
+          style={{ width: '276px', padding: '10px', marginRight: '10px' }}
         />
         <button type="submit" disabled={!newServiceUrl} style={{ padding: '10px 20px', cursor: 'pointer' }}>
           Добавить
         </button>
       </form>
-      <select value={request.apiUrl} onChange={(e) => handleChangeApiUrl(e)} style={{ width: '250px', padding: '10px', marginRight: '10px', marginBottom: '10px' }}>
+      <select value={request.apiUrl} onChange={(e) => handleChangeApiUrl(e)} style={{ width: '300px', padding: '10px', marginRight: '10px', marginBottom: '10px' }}>
         <option value="">Использовать адрес сервиса из curl</option>
         {request.serviceList.map((url, index) => (
           <option key={index} value={url}>
@@ -308,13 +380,13 @@ const App: React.FC = () => {
         readOnly
         style={{ width: '100%', height: '200px', padding: '10px', marginBottom: '10px', backgroundColor: '#f7f7f7', border: '1px solid #ddd' }}
       />
-      <div style={{ marginBottom: '10px' }}>
+      <div>
         <input
           type="text"
           placeholder="Идентификатор запроса"
           value={newRequestId}
           onChange={(e) => setNewRequestId(e.target.value)}
-          style={{ width: '226px', padding: '10px', marginRight: '10px' }}
+          style={{ width: '276px', padding: '10px', marginRight: '10px' }}
         />
         <button disabled={!newRequestId || !request.apiUrl || isLogsLoading} onClick={() => getLogs(request.apiUrl, newRequestId)} style={{ padding: '10px 20px', cursor: 'pointer' }}>
           Скачать логи
@@ -323,12 +395,9 @@ const App: React.FC = () => {
           {isLogsLoading ? <FontAwesomeIcon icon={faSpinner} spin /> : ''}
         </span>
       </div>
-      <textarea
-        value={request.responseLogs}
-        readOnly
-        style={{ width: '100%', height: '200px', padding: '10px', backgroundColor: '#f7f7f7', border: '1px solid #ddd' }}
-      />
     </div>
+      {logs ? <Table columns={columns} data={logs} /> : ''}
+    </>
   );
 };
 
