@@ -11,18 +11,13 @@ interface TableProps {
 }
 
 const Table: React.FC<TableProps> = ({ columns, data }) => {
-  // Filter out columns that don't exist in the data
-  const visibleColumns = columns.filter(column => {
-    return data.every(item => item.hasOwnProperty(column.accessor));
-  });
-
   const {
     getTableProps,
     getTableBodyProps,
     headerGroups,
     rows,
     prepareRow,
-  } = useTable({ columns: visibleColumns, data });
+  } = useTable({ columns, data });
 
   console.log(headerGroups);
 

@@ -2,7 +2,9 @@ import React, {useEffect, useRef, useState} from 'react';
 import axios, {AxiosError, AxiosResponse} from 'axios';
 import {FontAwesomeIcon} from '@fortawesome/react-fontawesome';
 import {faSpinner} from '@fortawesome/free-solid-svg-icons';
-import Table from "./Table";
+import Table from './Table';
+import _ from 'lodash';
+const { JsonTree } = require('react-editable-json-tree');
 
 type ResponseStatus = 'success' | 'error';
 
@@ -11,38 +13,53 @@ type Curl = { urlParts: [string,string]; url: string; method: string; headers: a
 interface Request {
   apiUrl: string;
   serviceList: string[];
+  curlList: [string, string][];
   curlCommand: string;
   curl: Curl | null;
+  requestId: string | null;
   responseStatus: ResponseStatus | null;
   responseTime: number | null;
-  responseData: string;
+  responseData: any;
 }
 
 function loadRequestFromLocalStorage(): Request {
+  const def = { serviceList: [], curlList: [] };
   const storedRequest = localStorage.getItem('request');
-  return storedRequest ? JSON.parse(storedRequest) : { serviceList: [] };
+  const request = storedRequest ? JSON.parse(storedRequest) : { };
+  const result: Request = {...def, ...request};
+  return {
+    ...result,
+    apiUrl: _.trimEnd(result.apiUrl, '/'),
+    serviceList: result.serviceList.map(url => _.trimEnd(url, '/')),
+    curlList: result.curlList.map(urls => {
+      const [p1, p2] = urls[0].split(' ');
+      const url = p2.startsWith('/') ? p2 : '/' + p2;
+      return [p1 + ' ' + url, urls[1]];
+    }),
+  }
 }
 
 function saveRequestToLocalStorage(request: Request): void {
   localStorage.setItem('request', JSON.stringify(request, null, 2));
 }
 
-function loadRequestIdFromLocalStorage(): string {
-  return localStorage.getItem('requestId') ?? '';
-}
-
-function saveRequestIdToLocalStorage(requestId: string): void {
-  localStorage.setItem('requestId', requestId);
+function isArrayOrObject(a: any): boolean {
+  return a instanceof Object;
 }
 
 const App: React.FC = () => {
   const [request, setRequest] = useState<Request>(loadRequestFromLocalStorage());
-  const [logs, setLogs] = useState<[] | null>(null);
-  const [newRequestId, setNewRequestId] = useState(loadRequestIdFromLocalStorage());
+  const [logs, setLogs] = useState<any[] | null>(null);
+  const [newRequestId, setNewRequestId] = useState('');
   const [newServiceUrl, setNewServiceUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isLogsLoading, setLogsIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const toggleExpand = () => {
+    setIsExpanded(!isExpanded);
+  };
 
   useEffect(() => {
     const scrollToBottom = () => {
@@ -108,11 +125,6 @@ const App: React.FC = () => {
     saveRequestToLocalStorage(request);
   }, [request]);
 
-  const getUrlParts = (url: string): [string, string] => {
-    const apiStartIndex = url.indexOf('api');
-    return [url.substring(0, apiStartIndex), url.substring(apiStartIndex)];
-  }
-
   const prevRequestRef = useRef<Request>(request);
 
   useEffect(() => {
@@ -138,11 +150,13 @@ const App: React.FC = () => {
         }
 
         const parsedCurl = parseCurlCommand(request.curlCommand);
-        console.log('parsedCurl', parsedCurl);
 
         if (parsedCurl.url) {
-          setErrorMessage(null);
-          return {...parsedCurl, urlParts: getUrlParts(parsedCurl.url), url: parsedCurl.url};
+          const url = splitUrl(parsedCurl.url);
+          if (url) {
+            setErrorMessage(null);
+            return { method: parsedCurl.method, url: parsedCurl.url, urlParts: [url.baseUrl, url.rest], headers: parsedCurl.headers, body: parsedCurl.body};
+          }
         }
 
         setErrorMessage('Не удалось распарсить curl-команду и определить URL сервера запроса.');
@@ -156,6 +170,8 @@ const App: React.FC = () => {
 
     // Парсинг curl-запроса для получения метода, заголовков и тела запроса
     const parsedCurl = parseCurl();
+    console.log('parsedCurl', parsedCurl);
+
     if (parsedCurl === null) {
       handleRequestChange('curl', null);
       return;
@@ -186,10 +202,10 @@ const App: React.FC = () => {
 
   const handleAddService = (e: React.FormEvent) => {
     e.preventDefault();
-    const url = newServiceUrl + (newServiceUrl.endsWith('/') ? '' : '/');
-    if (newServiceUrl && !request.serviceList.includes(url)) {
-      handleRequestChange('apiUrl', url);
-      handleRequestChange('serviceList', [...request.serviceList, url]);
+    const url = splitUrl(newServiceUrl);
+    if (url && !request.serviceList.includes(url.baseUrl)) {
+      handleRequestChange('apiUrl', url.baseUrl);
+      handleRequestChange('serviceList', [...request.serviceList, url.baseUrl]);
       setNewServiceUrl('');
     }
   };
@@ -209,12 +225,7 @@ const App: React.FC = () => {
     }
 
     setIsLoading(true);
-    setNewRequestId('');
-    saveRequestIdToLocalStorage('');
-    handleRequestChange('responseData', '');
-    handleRequestChange('responseTime', null);
-    handleRequestChange('responseStatus', null);
-    setLogs(null);
+    clearRequestData();
 
     try {
       // Отправка запроса с использованием axios
@@ -230,7 +241,7 @@ const App: React.FC = () => {
       setIsLoading(false);
 
       // Установка полученных данных в состояние
-      handleRequestChange('responseData', JSON.stringify(response.data, null, 2));
+      handleRequestChange('responseData', response.data);
       handleRequestChange('responseStatus', 'success');
 
       setRequestId(response);
@@ -278,6 +289,7 @@ const App: React.FC = () => {
     }
 
     console.log('filename', filename);
+    handleRequestChange('responseData', `Файл ${filename} получен`);
 
     // Create a URL for the downloaded file
     const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -295,8 +307,7 @@ const App: React.FC = () => {
     const requestId = response.headers['kiussrequestid'];
     console.log('requestId', requestId);
 
-    setNewRequestId(requestId);
-    saveRequestIdToLocalStorage(requestId);
+    handleRequestChange('requestId', requestId);
   }
 
   const setResponseTime = (response: AxiosResponse) => {
@@ -312,7 +323,7 @@ const App: React.FC = () => {
     try {
       const responseLogs = await axios({
         method: 'GET',
-        url: baseUrl + 'logs/' + requestId,
+        url: baseUrl + '/logs/' + requestId,
       });
       setLogsIsLoading(false);
       console.log('responseLogs', responseLogs);
@@ -335,6 +346,76 @@ const App: React.FC = () => {
     return null; // Если статус не установлен, ничего не отображаем
   };
 
+  const [isCopied, setIsCopied] = useState<boolean | null>(null);
+
+  const handleBodyReplace = async (e: React.FormEvent) => {
+    if (!request.curl) {
+      return;
+    }
+
+    try {
+      e.preventDefault();
+      const text = await navigator.clipboard.readText();
+      const obj = JSON.parse(text);
+      handleRequestChange('curl', {...request.curl, body: obj});
+      setIsCopied(true);
+      setTimeout(() => {
+        setIsCopied(null);
+      }, 1500);
+    } catch (err) {
+      console.error('Failed to read text: ', err);
+      setIsCopied(false);
+      setTimeout(() => {
+        setIsCopied(null);
+      }, 1500);
+    }
+  };
+
+  const handleCopy = async (e: React.FormEvent) => {
+    try {
+      e.preventDefault();
+      await navigator.clipboard.writeText(isArrayOrObject(request.responseData) ? JSON.stringify(request.responseData) : request.responseData);
+      setIsCopied(true);
+      setTimeout(() => {
+        setIsCopied(null);
+      }, 1500);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+      setIsCopied(false);
+      setTimeout(() => {
+        setIsCopied(null);
+      }, 1500);
+    }
+  };
+
+  const requestId = newRequestId || request.requestId || '';
+  const curlDescription = request.curl ? request.curl.method + ' ' + request.curl.urlParts[1] : '';
+
+  const handleChangeCurl = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const filter = request.curlList.filter(c => c[0] === e.target.value);
+    handleRequestChange('curlCommand', filter.at(0)?.at(1) ?? '');
+    clearRequestData();
+  }
+
+  const handleRemoveCurlFromList = () => {
+    handleRequestChange('curlList', request.curlList.filter(c => c[0] !== curlDescription));
+    clearRequestData();
+  }
+
+  const handleAddCurlToList = () => {
+    handleRequestChange('curlList', [...request.curlList, [curlDescription, request.curlCommand]]);
+    clearRequestData();
+  }
+
+  const clearRequestData = () => {
+    handleRequestChange('requestId', null);
+    handleRequestChange('responseData', '');
+    handleRequestChange('responseTime', null);
+    handleRequestChange('responseStatus', null);
+    setLogs(null);
+    setNewRequestId('');
+  }
+
   return (
     <>
     <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '20px' }}>
@@ -346,7 +427,7 @@ const App: React.FC = () => {
           onChange={(e) => setNewServiceUrl(e.target.value)}
           style={{ width: '276px', padding: '10px', marginRight: '10px' }}
         />
-        <button type="submit" disabled={!newServiceUrl} style={{ padding: '10px 20px', cursor: 'pointer' }}>
+        <button type="submit" disabled={splitUrl(newServiceUrl, false) === null} style={{ padding: '10px 20px', cursor: 'pointer' }}>
           Добавить
         </button>
       </form>
@@ -361,6 +442,21 @@ const App: React.FC = () => {
       <button disabled={!request.apiUrl || request.apiUrl === request.curl?.urlParts[0]} onClick={() => handleRemoveService()} style={{ padding: '10px 20px', cursor: 'pointer' }}>
         Удалить из списка
       </button>
+      <br />
+      <select value={curlDescription} onChange={handleChangeCurl} style={{ width: '663px', padding: '10px', marginRight: '10px', marginBottom: '10px' }}>
+        <option value="">Использовать новый curl</option>
+        {request.curlList.map((url, index) => (
+          <option key={index} value={url[0]}>
+            {url[0]}
+          </option>
+        ))}
+      </select>
+      <button disabled={request.curlList.filter(c => c[0] === curlDescription).length === 0} onClick={handleRemoveCurlFromList} style={{ padding: '10px 20px', marginRight: '10px', cursor: 'pointer' }}>
+        Удалить из списка
+      </button>
+      <button disabled={!request.curl || request.curlList.filter(c => c[0] === curlDescription).length !== 0} onClick={handleAddCurlToList} style={{ padding: '10px 20px', cursor: 'pointer' }}>
+        Добавить в список
+      </button>
       <form onSubmit={handleSubmit} style={{ marginBottom: '10px' }}>
         <textarea
           value={request.curlCommand}
@@ -368,27 +464,56 @@ const App: React.FC = () => {
           style={{ width: '100%', height: '200px', padding: '10px', marginBottom: '10px' }}
         />
         {errorMessage && <div style={{ color: 'red', marginBottom: '10px' }}>{errorMessage}</div>}
-        <button type="submit" style={{ padding: '10px 20px', cursor: 'pointer' }} disabled={isLoading || !request.curl}>
+        <button disabled={!request.curl} style={{ padding: '10px 20px', marginBottom: '10px', width: '170px', cursor: 'pointer' }} onClick={(e) => { e.preventDefault(); toggleExpand();}}>
+          Параметры запроса
+        </button>
+        <button disabled={!request.curl || !request.curl.body} style={{ marginLeft: '10px', padding: '10px 20px', cursor: 'pointer' }} onClick={handleBodyReplace}>Replace body from clipboard</button>
+        <button disabled={!request.responseData} style={{ marginLeft: '10px', padding: '10px 20px', cursor: 'pointer' }} onClick={handleCopy}>Copy response to clipboard</button>
+        <br />
+        <button type="submit" style={{ padding: '10px 20px', width: '170px', cursor: 'pointer' }} disabled={isLoading || !request.curl}>
           Выполнить запрос
         </button>
-        <span style={{ marginLeft: '10px' }}>
-          {isLoading ? <FontAwesomeIcon icon={faSpinner} spin /> : <>{renderStatusIndicator()} {request.responseTime ? request.responseTime  + ' с.' : ''}</>}
-        </span>
+        {isLoading ? <span style={{ marginLeft: '10px' }}><FontAwesomeIcon icon={faSpinner} spin /></span>
+          : request.responseStatus && <span style={{ marginLeft: '10px' }}>{renderStatusIndicator()} {request.responseTime ? request.responseTime  + ' с.' : ''}</span>
+        }
+        {isCopied === true ?
+          <span style={{ marginLeft: '10px', color: 'green' }}>Выполнено</span> :
+          isCopied === false ?
+            <span style={{ marginLeft: '10px', color: 'red' }}>Не выполнено</span> : null
+        }
       </form>
-      <textarea
-        value={request.responseData}
-        readOnly
-        style={{ width: '100%', height: '200px', padding: '10px', marginBottom: '10px', backgroundColor: '#f7f7f7', border: '1px solid #ddd' }}
-      />
+      {isExpanded && request.curl && (<div style={{ width: '100%', marginBottom: '10px' }}>
+          <JsonTree
+            onFullyUpdate={(data: any) => {
+              console.log('data', data);
+              handleRequestChange('curl', data);
+            }}
+            isCollapsed={(keyPath: string[]) => {
+              //console.log(keyPath);
+              return keyPath.length > 0 && keyPath[0] !== 'body';
+            }}
+            readOnly={(keyName: any, data: any, keyPath: string[]) => keyPath.length <= 1 || keyPath[0] !== 'body'}
+            data={request.curl} />
+      </div>
+      )}
+      {isArrayOrObject(request.responseData) ?
+        <div style={{ width: '100%', marginBottom: '10px' }}>
+          <JsonTree isCollapsed={() => false} readOnly={true} data={request.responseData} />
+        </div> :
+        <textarea
+          value={request.responseData}
+          readOnly
+          style={{ width: '100%', height: '200px', padding: '10px', marginBottom: '10px', backgroundColor: '#f7f7f7', border: '1px solid #ddd' }}/>
+      }
       <div>
         <input
           type="text"
           placeholder="Идентификатор запроса"
-          value={newRequestId}
+          value={requestId}
           onChange={(e) => setNewRequestId(e.target.value)}
           style={{ width: '276px', padding: '10px', marginRight: '10px' }}
         />
-        <button disabled={!newRequestId || !request.apiUrl || isLogsLoading} onClick={() => getLogs(request.apiUrl, newRequestId)} style={{ padding: '10px 20px', cursor: 'pointer' }}>
+        <button disabled={!requestId || !request.apiUrl || isLogsLoading} onClick={() => getLogs(request.apiUrl, requestId)} style={{ padding: '10px 20px', cursor: 'pointer' }}>
           Скачать логи
         </button>
         <span style={{ marginLeft: '10px' }}>
@@ -408,36 +533,61 @@ const App: React.FC = () => {
 // Функция для парсинга curl-запроса
 function parseCurlCommand(curl: string): { url: string | null, method: string; headers: any; body: any } {
   const lines = curl.trim().split('\n');
-  let method = null;
   const headers: any = {};
-  let body: any = null;
 
-  const urlRegex = /'(.*)'/;
-  const urlMatch = lines[0].match(urlRegex);
+  const urlRegex = /(https?:\/\/[^\s'"]+)/g;
+  const matches = [...curl.matchAll(urlRegex)];
+  const url = matches.length > 0 ? matches[0][1] : null;
+
+  // Regular expression to match the method and body
+  const methodRegex = /-X\s*'?(\w+)'?/;
+  const bodyRegex = /(-d|--data-raw) '(.*)'/s;
+
+  // Extract the body
+  const bodyMatch = curl.match(bodyRegex);
+  const body = bodyMatch && bodyMatch.length > 2 ? JSON.parse(bodyMatch[2]) : null;
+
+  // Extract the method
+  const methodMatch = curl.match(methodRegex);
+  const method = methodMatch ? methodMatch[1] : body === null ? 'GET' : 'POST';
 
   for (let line of lines) {
     line = line.trim();
 
-    if (line.startsWith('-X')) {
-      method = line.slice(4).trim().slice(0,-3);
-    } else if (line.startsWith('-H')) {
+    if (line.startsWith('-H')) {
       const [key, ...rest] = line.slice(4).split(':').map(part => part.trim());
+      if (rest.length === 0) {
+        continue;
+      }
       const value = rest.join(':');
-      headers[key] = value.slice(0,-3);
-    } else if (line.startsWith('--data-raw')) {
-      body = JSON.parse(line.slice(12).trim().slice(0,-3));
-    } else if (line.startsWith('--data-binary')) {
-      body = line.slice(15).trim().slice(0,-3);
-    } else if (line.startsWith('-d')) {
-      body = line.slice(4).trim().slice(0,-3);
+      headers[key] = trimSlash(value);
     }
   }
 
-  if (!method) {
-    method = body === null ? 'GET' : 'POST';
-  }
-
-  return { url: urlMatch && urlMatch[1] ? urlMatch[1] : null, method, headers, body };
+  return { url, method, headers, body };
 }
+
+const trimSlash = (str: string) => {
+  const trim = str.trim();
+  if (trim.endsWith('\' \\')) {
+    return trim.slice(0, -3);
+  } else if (trim.endsWith('\'')) {
+    return trim.slice(0, -1);
+  } else {
+    return trim;
+  }
+}
+
+const splitUrl = (url: string, printError = true): { baseUrl: string; rest: string } | null => {
+  try {
+    const parsedUrl = new URL(url);
+    const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+    const rest = parsedUrl.pathname + parsedUrl.search + parsedUrl.hash;
+    return { baseUrl, rest };
+  } catch (error) {
+    printError && console.error('Invalid URL:', error);
+    return null;
+  }
+};
 
 export default App;
