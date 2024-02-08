@@ -76,46 +76,46 @@ const App: React.FC = () => {
     () => [
       {
         Header: '№',
-        accessor: 'Id',
+        accessor: 'id',
       },
       {
         Header: 'Сообщение',
-        accessor: 'Message',
+        accessor: 'message',
         width: 300,
       },
       {
         Header: 'Ошибка',
-        accessor: 'Exception',
+        accessor: 'exception',
         width: 300,
       },
       {
         Header: 'Категория',
-        accessor: 'Level',
+        accessor: 'level',
       },
       {
         Header: 'Дата',
-        accessor: 'TimeStamp',
+        accessor: 'createDate',
         width: 180,
       },
       {
         Header: 'Запрос',
-        accessor: 'RequestId',
+        accessor: 'requestId',
       },
       {
         Header: 'ПБ',
-        accessor: 'DrillingProgramId',
+        accessor: 'drillingProgramId',
       },
       {
         Header: 'Пользователь',
-        accessor: 'UserName',
+        accessor: 'userName',
       },
       {
         Header: 'Приложение',
-        accessor: 'ApplicationName',
+        accessor: 'applicationName',
       },
       {
         Header: 'Версия',
-        accessor: 'ApplicationVersion',
+        accessor: 'applicationVersion',
       },
     ],
     []
@@ -234,6 +234,7 @@ const App: React.FC = () => {
         url: request.curl.url,
         headers: request.curl.headers,
         data: request.curl.body,
+        responseType: 'arraybuffer',
       });
       console.log('response', response);
 
@@ -241,16 +242,17 @@ const App: React.FC = () => {
       setIsLoading(false);
 
       // Установка полученных данных в состояние
-      handleRequestChange('responseData', response.data);
       handleRequestChange('responseStatus', 'success');
 
       setRequestId(response);
       setResponseTime(response);
 
-      if (response.headers['content-type'] === 'application/octet-stream') {
+      const contentDisposition = response.headers['content-disposition'];
+      if (contentDisposition) {
         downloadFile(response);
+      } else {
+        handleRequestChange('responseData', getResponseData(response));
       }
-
     } catch (error) {
       console.error('Ошибка при выполнении запроса:', error);
 
@@ -260,7 +262,7 @@ const App: React.FC = () => {
       if (axios.isAxiosError(error)) {
         const axiosError = error as AxiosError;
         const errorText = axiosError.response
-            ? axiosError.message + ` ${axiosError.response.statusText}\n` + JSON.stringify(axiosError.response.data, null, 2)
+            ? axiosError.message + ` ${axiosError.response.statusText}\n` + JSON.stringify(getResponseData(axiosError.response), null, 2)
             : axiosError.message;
         handleRequestChange('responseData', errorText);
         handleRequestChange('responseStatus', 'error');
@@ -303,6 +305,16 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   }
 
+  const getResponseData = (response: AxiosResponse) => {
+    const contentType = response.headers['content-type'];
+    const text = new TextDecoder().decode(response.data);
+    if (contentType?.includes('application/json')) {
+      return JSON.parse(text);
+    }
+
+    return text;
+  }
+
   const setRequestId = (response: AxiosResponse) => {
     const requestId = response.headers['kiussrequestid'];
     console.log('requestId', requestId);
@@ -317,16 +329,21 @@ const App: React.FC = () => {
     handleRequestChange('responseTime', parseFloat(responseTime));
   }
 
-  const getLogs = async (baseUrl: string, requestId: string) => {
+  const getLogs = async (requestId: string) => {
     setLogsIsLoading(true);
+
+    const log = JSON.parse(localStorage.getItem('log')!);
+    const baseUrl = log.baseUrl;
+    const token = log.token;
 
     try {
       const responseLogs = await axios({
+        headers: { Authorization: 'Bearer ' + token },
         method: 'GET',
-        url: baseUrl + '/logs/' + requestId,
+        url: baseUrl + '/api/v1/admin/log/request/' + requestId,
       });
       setLogsIsLoading(false);
-      console.log('responseLogs', responseLogs);
+      console.log('responseLogs', responseLogs.data);
       setLogs(responseLogs.data);
     }
     catch (error) {
@@ -513,7 +530,7 @@ const App: React.FC = () => {
           onChange={(e) => setNewRequestId(e.target.value)}
           style={{ width: '276px', padding: '10px', marginRight: '10px' }}
         />
-        <button disabled={!requestId || !request.apiUrl || isLogsLoading} onClick={() => getLogs(request.apiUrl, requestId)} style={{ padding: '10px 20px', cursor: 'pointer' }}>
+        <button disabled={!requestId || !request.apiUrl || isLogsLoading} onClick={() => getLogs(requestId)} style={{ padding: '10px 20px', cursor: 'pointer' }}>
           Скачать логи
         </button>
         <span style={{ marginLeft: '10px' }}>
